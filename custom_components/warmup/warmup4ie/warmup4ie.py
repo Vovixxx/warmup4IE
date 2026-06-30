@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 
 RUN_MODE = {0: 'off',
             1: 'prog',
-            2: 'overide',
+            2: 'override',
             3: 'fixed',
             4: 'frost',
             5: 'away',

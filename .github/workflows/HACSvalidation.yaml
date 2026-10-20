@@ -11,6 +11,9 @@ on:
 
 jobs:
   validate-hacs:
+    # HACS rejects repositories that are not the published default.
+    # Forks otherwise fail this workflow on every upstream merge.
+    if: github.repository == 'ha-warmup/warmup'
     runs-on: "ubuntu-latest"
     steps:
       - uses: "actions/checkout@v3"

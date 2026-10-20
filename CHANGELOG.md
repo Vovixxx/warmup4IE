@@ -16,19 +16,32 @@ Recent features from development that have not been formally released yet:
 
 ### Added
 
-* 
+* Sensors for air temperature, floor temperature, today's energy and today's cost
+* Optional `location` filter so one Home Assistant instance can load a single Warmup location
+* `duration` on `warmup.set_override`, as an alternative to an `until` clock time
+* `warmup.set_location_mode` for whole-location off, frost, and resume-schedule
+* `warmup.set_holiday` and `warmup.cancel_holiday`
+* Boost preset, implemented as a 60 minute override at the room's comfort temperature
 
 ### Changed
 
-* 
+* Turning a climate entity off, or selecting frost protection, now changes that room. It no longer changes every thermostat at the location.
+* Temperature changes keep the requested target on the card until Warmup reports it back, so a slow poll cannot snap the card to the previous value.
+* While a thermostat is off, the last real target stays on the card instead of dropping to 0.
+* HACS validation runs only in the published `ha-warmup/warmup` repository, so forks no longer fail that workflow.
 
 ### Fixed
 
-* 
+* Heating state uses the relay flag when Warmup provides it, and otherwise reports idle once the room reaches its target.
+* `warmup.set_override` converts Fahrenheit and Kelvin into the Celsius value the API requires.
+* Login failures name an invalid email or password instead of following up with "access token is not set". An expired token is refreshed once.
+* Network failures log one warning instead of a traceback from the entity update.
+* Cost now returns the cost field. Energy and cost are numbers, and an unwired 90°C probe is treated as no reading.
+* The run mode name `schedule` is recognized alongside the older integer mode codes.
 
 ### Documented
 
-* 
+* HVAC modes, the per-room off change, and what the energy figure represents.
 
 ### Deprecated
 

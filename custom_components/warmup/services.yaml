@@ -1,12 +1,56 @@
 set_override:
-  description: Set or update a temperature override.
+  description: Hold one room at a temperature. This does not change the other rooms.
   fields:
     entity_id:
-      description: Name of Warmup entity.
-      example: "Kitchen"
+      description: Warmup climate entity. Omit to update every room.
+      example: climate.kitchen
     temperature:
-      description: Temperature to set in 0.5 increments
-      example: "22.5"
+      description: Temperature in the unit system configured for Home Assistant, in 0.5 increments.
+      example: 22.5
+    duration:
+      description: How long the override should last, in minutes. Use this or until. Defaults to 60.
+      example: 120
     until:
-      description: When the override should end, enclose in quotes otherwise the colon causes problems. Defaults to 1 hour from now.
+      description: Clock time when the override should end, in quotes. Ignored when duration is set.
       example: "14:00"
+
+set_location_mode:
+  description: >
+    Change every thermostat at a location. The climate card's off button now
+    turns off only that room; use mode off here for the old whole-location off.
+  fields:
+    entity_id:
+      description: A climate entity whose location should change. Omit to include every location.
+      example: climate.kitchen
+    location:
+      description: Optional location name. Limits the change to that location.
+      example: Home
+    mode:
+      description: off, frost, or auto (resume the schedule).
+      example: "off"
+
+set_holiday:
+  description: Put a location into holiday mode. Warmup applies this to every room there.
+  fields:
+    entity_id:
+      description: A climate entity whose location should go on holiday.
+      example: climate.kitchen
+    location:
+      description: Optional location name.
+      example: Home
+    temperature:
+      description: Holiday temperature in the unit system configured for Home Assistant.
+      example: 5
+    days:
+      description: Number of days, starting now.
+      example: 7
+
+cancel_holiday:
+  description: Cancel holiday mode for a location.
+  fields:
+    entity_id:
+      description: A climate entity whose location should leave holiday mode.
+      example: climate.kitchen
+    location:
+      description: Optional location name.
+      example: Home

@@ -47,7 +47,10 @@ If you have HACS installed, then use this button
 
 Alternatively Explore HACS Repositories and search for `warmup`
 
-See more detailed instuctions on [installing `warmup` in HACS](docs/install-in-HACS.md)
+See more detailed instuctions on [installing `warmup` in HACS](docs/install-in-HACS.md).
+
+The copy published in HACS is still `ha-warmup/warmup`. The fixes in this
+fork are in the manual install below until that repository is updated.
 
 
 ## Manual installation
@@ -65,7 +68,7 @@ into in your HA **config** folder, e.g.:
 ```sh
 cd path/to/your/config
 
-git clone https://github.com/ha-warmup/warmup.git /tmp/warmup
+git clone https://github.com/Vovixxx/warmup4IE.git /tmp/warmup
 
 # remove any previous version
 rm -r ./custom_components/warmup 2>/dev/null
@@ -111,6 +114,7 @@ climate:
   - platform: warmup
     username: YOUR_E_MAIL_ADDRESS
     password: YOUR_PASSWORD
+    location: YOUR_LOCATION_NAME
 ```
 
 -   **username** (required): the username used to login to the warmup
@@ -118,6 +122,13 @@ climate:
 -   **password** (required): the password used to login to the warmup
     web site; may be moved to the secrets.yaml file. See
     [secrets](https://www.home-assistant.io/docs/configuration/secrets/)
+-   **location** (optional): only load rooms from this Warmup location.
+    The match ignores case. Leave it out to load every location on the account.
+
+Air temperature, floor temperature, today's energy and today's cost are
+added as sensors automatically. Temperatures on those sensors, and the
+extra climate attributes, are Celsius. Home Assistant converts the
+climate card itself into your unit system.
 
 After restarting home assistant, the component will be loaded
 automatically.
@@ -194,13 +205,34 @@ Note that some models may not have `comma` on the keyboard, which may also limit
 
 ## Supported Features
 
-At the moment the library supports reading current temperature, target
-temperature plus other values from the thermostat and setting the target
-temperature, switching between manual, automatic and frost protection
-mode, switching the device off, and setting a temporary override.
+The climate card can read the current and target temperatures, air and
+floor temperatures, today's energy and cost, and the relay state. It can
+set a fixed target, resume the schedule, turn on frost protection for
+that room, turn that room off, and hold a temporary override.
+
+HVAC modes:
+
+-   **heat** is fixed mode. The room stays at the target you set.
+-   **auto** follows the program stored on the thermostat.
+-   **off** turns off that room only.
+
+The whole-location off used by older versions is now
+`warmup.set_location_mode` with `mode: "off"`. Frost for every room at a
+location, holiday mode, and cancelling a holiday are services too.
+`warmup.set_override` accepts `duration` in minutes, or an `until` clock
+time. Temperatures passed to these services use the unit system
+configured in Home Assistant.
+
+Boost sets a 60 minute override at the room's comfort temperature.
+
+`hvac_action` follows the thermostat relay when Warmup sends
+`outputStatus`. Otherwise a room reports heating only while it is below
+its target. Today's `energy` value comes from Warmup and often moves in
+small steps, including while the relay is off, because it is a daily
+total rather than an instant power reading.
 
 For further information on versions please see the
-[CHANGELOG](https://github.com/ha-warmup/warmup/blob/master/CHANGELOG.md)
+[CHANGELOG](CHANGELOG.md)
 
 ## Find out more
 

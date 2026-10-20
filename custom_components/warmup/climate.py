@@ -38,7 +38,7 @@ from .const import (
     DOMAIN,
 )
 from .entity import ensure_location_device, thermostat_device_info
-from .warmup4ie.warmup4ie import infer_hvac_action, resolve_displayed_target
+from .warmup4ie.warmup4ie import infer_hvac_action, resolve_displayed_target, snap_setpoint
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ class WarmupThermostat(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_action(self):
-        """Return heating only when the relay is on, or the room is below target."""
+        """Return heating when the relay is on, or the room is below its target."""
         action = infer_hvac_action(
             self._on,
             None if self.device is None else self.device.output_status,
@@ -273,6 +273,7 @@ class WarmupThermostat(CoordinatorEntity, ClimateEntity):
         device = self.device
         if temperature is None or device is None:
             return
+        temperature = snap_setpoint(temperature)
         self.remember_target(temperature, CONST_MODE_FIXED)
         await self.hass.async_add_executor_job(device.set_new_temperature, temperature)
         await self.coordinator.async_request_refresh()

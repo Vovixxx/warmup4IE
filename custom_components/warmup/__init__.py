@@ -25,7 +25,7 @@ from .const import (
 )
 from .coordinator import WarmupCoordinator
 from .warmup4ie import Warmup4IE, WarmupAuthError
-from .warmup4ie.warmup4ie import location_selected, minutes_until, to_celsius
+from .warmup4ie.warmup4ie import location_selected, minutes_until, snap_setpoint, to_celsius
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,7 +133,9 @@ async def _async_register_services(hass: HomeAssistant):
         temperature = call.data.get(ATTR_TEMPERATURE)
         if temperature is None:
             return
-        temperature = to_celsius(temperature, hass.config.units.temperature_unit)
+        temperature = snap_setpoint(
+            to_celsius(temperature, hass.config.units.temperature_unit)
+        )
         duration = call.data.get(ATTR_DURATION)
         until = call.data.get(ATTR_UNTIL)
         if duration is not None:

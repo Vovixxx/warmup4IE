@@ -121,11 +121,12 @@ cost. A second floor probe and the lifetime energy counter are added when
 Warmup sends them. Sensor temperatures are Celsius. Home Assistant converts
 the climate card into your unit system.
 
-The account is polled once a minute, and every entity uses that same
-result. If Warmup cannot be reached, the devices go unavailable instead of
-keeping a stale "heating" state. A rejected password opens a re-authentication
-prompt. The poll interval can be changed under the integration's options,
-between 30 and 600 seconds.
+The account is polled every 30 seconds. Warmup's API has no subscription,
+so this is the safe refresh: commands show up within a few seconds, and the
+floor temperature usually moves on that same half-minute. The interval can
+be changed under the integration's options, between 30 and 600 seconds.
+If Warmup cannot be reached, the devices go unavailable instead of keeping
+a stale heating state. A rejected password opens a re-authentication prompt.
 
 An existing YAML block is imported into this entry on startup. After the
 entry appears, remove the YAML.
@@ -240,11 +241,14 @@ configured in Home Assistant.
 
 Boost sets a 60 minute override at the room's comfort temperature.
 
-`hvac_action` follows the thermostat relay when Warmup sends
-`outputStatus`. Otherwise a room reports heating only while it is below
-its target. Today's `energy` value comes from Warmup and often moves in
-small steps, including while the relay is off, because it is a daily
-total rather than an instant power reading.
+Setpoints are 0.5°C steps, which is what these thermostats store. A
+Fahrenheit value such as 78.5°F is not one of those steps, so it is rounded
+to the nearest half degree Celsius before it is sent. Heating is shown
+while the room is on and below its target. The relay flag from the API
+stays at zero on the 4iE even while the floor is rising, so it is only
+used when it is actually on. Today's `energy` value comes from Warmup and
+often moves in small steps, because it is a daily total rather than an
+instant power reading.
 
 For further information on versions please see the
 [CHANGELOG](CHANGELOG.md)

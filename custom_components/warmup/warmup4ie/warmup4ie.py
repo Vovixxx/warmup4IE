@@ -190,15 +190,15 @@ def normalize_room_mode(room_mode=None, room_mode_int=None):
 def infer_hvac_action(is_on, output_status, current, target):
     """Return off, heating, or idle.
 
-    ``output_status`` is the relay flag from the thermostat. When Warmup
-    omits it, heating is inferred only while the room is below the target.
-    A room sitting on its target is idle; treating equality as heating is
-    what made the climate card stay on ``heating`` all day.
+    A live 4iE keeps ``outputStatus`` at 0 while the floor temperature is
+    climbing toward a higher target, so a zero flag does not mean the room
+    is idle. A non-zero flag still means the relay is on. Otherwise the room
+    is heating only while it is below the target.
     """
     if not is_on:
         return "off"
-    if output_status is not None:
-        return "heating" if int(output_status) else "idle"
+    if output_status is not None and int(output_status):
+        return "heating"
     if current is not None and target is not None and current < target:
         return "heating"
     return "idle"
@@ -308,9 +308,18 @@ def _parse_number(value):
     return float(match.group())
 
 
+def snap_setpoint(value):
+    """Return the Celsius setpoint Warmup will store."""
+    return _warmup_temperature(value) / 10
+
+
 def _warmup_temperature(value):
-    """Return the integer tenth-of-a-degree value the API expects."""
-    return int(round(float(value) * 10))
+    """Return tenths of a degree, snapped to the 0.5°C step the device stores.
+
+    Sending 24.2 comes back as 24.0, and 25.8 comes back as 26.0. Snapping
+    first keeps the card on a setpoint Warmup will actually keep.
+    """
+    return int(round(float(value) * 2) * 5)
 
 
 class Warmup4IE:

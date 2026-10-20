@@ -231,13 +231,23 @@ def test_integer_run_mode_still_maps_when_the_api_omits_the_name():
     assert device.heating_target == "air"
 
 
-def test_hvac_action_uses_the_relay_before_the_temperature_guess():
+def test_hvac_action_uses_temperature_when_the_relay_flag_stays_off():
     assert api.infer_hvac_action(False, 1, 10, 20) == "off"
-    assert api.infer_hvac_action(True, 0, 10, 20) == "idle"
+    # Live 4iE stats keep outputStatus at 0 even while the floor is rising.
+    assert api.infer_hvac_action(True, 0, 23.0, 25.5) == "heating"
+    assert api.infer_hvac_action(True, 0, 22.5, 20.5) == "idle"
     assert api.infer_hvac_action(True, 1, 22, 20) == "heating"
     assert api.infer_hvac_action(True, None, 19, 20) == "heating"
     assert api.infer_hvac_action(True, None, 20, 20) == "idle"
     assert api.infer_hvac_action(True, None, 21, 20) == "idle"
+
+
+def test_setpoints_round_to_the_half_degree_the_device_stores():
+    assert api._warmup_temperature(23.5) == 235
+    assert api._warmup_temperature(24.5) == 245
+    assert api._warmup_temperature(24.2) == 240
+    assert api._warmup_temperature(23.6) == 235
+    assert api._warmup_temperature(25.8) == 260
 
 
 def test_displayed_target_ignores_a_stale_poll_and_a_zero_from_off():

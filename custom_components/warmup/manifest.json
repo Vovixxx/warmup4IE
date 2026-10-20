@@ -11,5 +11,5 @@
   "loggers": ["custom_components.warmup"],
   "quality_scale": "custom",
   "requirements": ["requests>=2.28.0"],
-  "version": "2026.10.22"
+  "version": "2026.10.23"
 }

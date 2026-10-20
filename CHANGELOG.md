@@ -20,7 +20,7 @@ Recent features from development that have not been formally released yet:
 * HACS custom-repository metadata: `hacs.json`, brand icon, and Home Assistant 2025.1 as the minimum version
 * One Home Assistant device per thermostat, grouped under its Warmup location
 * Sensors for air temperature, floor temperature, today's energy and today's cost, created with the device instead of a separate YAML platform
-* A single shared poll. The interval is configurable from 30 to 600 seconds
+* A single shared poll every 30 seconds. The Warmup API does not support subscriptions. The interval is configurable from 30 to 600 seconds
 * Optional location choice when an account has more than one location
 * `duration` on `warmup.set_override`, as an alternative to an `until` clock time
 * `warmup.set_location_mode` for whole-location off, frost, and resume-schedule
@@ -39,6 +39,8 @@ Recent features from development that have not been formally released yet:
 * A dropped connection is retried, and a poll that returns no locations keeps the previous device list instead of clearing the house.
 * One malformed room no longer drops the other thermostats on the account.
 * Entities go unavailable when the poll fails, instead of sitting on the last heating state.
+* A room below its target now shows heating. These thermostats report `outputStatus` as 0 even while the floor temperature is rising, so that flag is only trusted when it is non-zero.
+* Setpoints are rounded to the 0.5°C step the device stores. Finer values, including 78.5°F, were accepted by the API and then rewritten.
 * Heating state uses the relay flag when Warmup provides it, and otherwise reports idle once the room reaches its target.
 * `warmup.set_override` converts Fahrenheit and Kelvin into the Celsius value the API requires.
 * Login failures name an invalid email or password instead of following up with "access token is not set". An expired token is refreshed once.

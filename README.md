@@ -5,7 +5,7 @@ Warmup under-floor heating devices into
 [Home Assistant](https://www.home-assistant.io/). 
 It is compatible with the Home Assistant Community Store (HACS).
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
 [Warmup Plc](https://www.warmup.co.uk/) 
 manufacture under-floor heating (UFH) and control systems, 
@@ -41,16 +41,20 @@ See <https://my.warmup.com/login>
 
 ## Home Assistant Community Store
 
-If you have HACS installed, then use this button
+This repository is installed as a custom HACS repository. It is not the
+copy in the default HACS catalog. That catalog entry is
+`ha-warmup/warmup`, and both use the `warmup` domain, so remove the
+default integration before installing this one.
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ha-warmup&repository=warmup&category=integration)
+Requires Home Assistant 2025.1.0 or newer.
 
-Alternatively Explore HACS Repositories and search for `warmup`
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Vovixxx&repository=warmup4IE&category=integration)
 
-See more detailed instuctions on [installing `warmup` in HACS](docs/install-in-HACS.md).
+Or add `https://github.com/Vovixxx/warmup4IE` under HACS → Integrations →
+Custom repositories, with the category set to Integration. Then download
+Warmup and restart Home Assistant.
 
-The copy published in HACS is still `ha-warmup/warmup`. The fixes in this
-fork are in the manual install below until that repository is updated.
+See [installing in HACS](docs/install-in-HACS.md).
 
 
 ## Manual installation

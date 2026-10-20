@@ -1,26 +1,7 @@
-{% if prerelease %}
-## **NB!** This is a beta/pre-release version!
+This integration connects Warmup 4iE and 6iE thermostats to Home Assistant through the my.warmup.com account.
 
-{% endif %}
-This is a Custom Component to integrate Warmup 
-under-floor heating devices into Home Assistant. 
+Add it from HACS as a custom repository: `https://github.com/Vovixxx/warmup4IE` with category Integration. It uses the same `warmup` domain as the older default repository, so remove that copy before installing this one.
 
-Warmup Plc manufacture under-floor heating (UFH) 
-and control systems, 
-including a range of wifi-enabled home thermostats. 
-Some of these thermostats, such as the 4IE and 6IE, 
-have an API. 
-This software enables communication via this API, 
-and allows Home Assistant to read and control the supported devices, 
-using a python script to perform the integration. 
-It is compatible with the Home Assistant Community Store (HACS).
+After download, restart Home Assistant and add the integration from Settings → Devices & services.
 
-Please note that Warmup Plc were not involved 
-in the creation of this software, 
-but we acknowledge their ownership of 
-registered trademarks relating to their brand and products. 
-
-For further information please see the full project README at 
-https://github.com/ha-warmup/warmup
-
-[![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
+Warmup Plc did not create this software. The Warmup name and product names are their trademarks.

@@ -6,6 +6,26 @@ https://hacs.xyz/docs/setup/prerequisites
 
 If you want other kinds if installation, please see [README](../README.md).
 
+## Custom repository
+
+This fork is not in the default HACS catalog. In HACS, open Integrations,
+choose Custom repositories, and add:
+
+`https://github.com/Vovixxx/warmup4IE`
+
+Category: Integration.
+
+If Warmup from the default catalog is already installed, remove it first.
+Both copies install into `custom_components/warmup`.
+
+Requires Home Assistant 2025.1.0 or newer.
+
+## Default catalog screenshots
+
+These screenshots show the older default-catalog install. Use them only
+as a guide for the download and restart steps after the custom repository
+is added.
+
 ## Default installation
 
 
@@ -51,7 +71,7 @@ In the top right corner select the 3-dots menu,
 and choose _Custom repositories_. 
 Paste in the URL to this repo, 
 
-<https://github.com/ha-warmup/warmup/>
+<https://github.com/Vovixxx/warmup4IE>
 
 and select _Category_: **Integration**. 
 

@@ -17,6 +17,7 @@ Recent features from development that have not been formally released yet:
 ### Added
 
 * Config flow under Settings → Devices & services, with re-authentication when the password is rejected
+* HACS custom-repository metadata: `hacs.json`, brand icon, and Home Assistant 2025.1 as the minimum version
 * One Home Assistant device per thermostat, grouped under its Warmup location
 * Sensors for air temperature, floor temperature, today's energy and today's cost, created with the device instead of a separate YAML platform
 * A single shared poll. The interval is configurable from 30 to 600 seconds

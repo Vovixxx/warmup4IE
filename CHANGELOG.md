@@ -16,8 +16,11 @@ Recent features from development that have not been formally released yet:
 
 ### Added
 
-* Sensors for air temperature, floor temperature, today's energy and today's cost
-* Optional `location` filter so one Home Assistant instance can load a single Warmup location
+* Config flow under Settings → Devices & services, with re-authentication when the password is rejected
+* One Home Assistant device per thermostat, grouped under its Warmup location
+* Sensors for air temperature, floor temperature, today's energy and today's cost, created with the device instead of a separate YAML platform
+* A single shared poll. The interval is configurable from 30 to 600 seconds
+* Optional location choice when an account has more than one location
 * `duration` on `warmup.set_override`, as an alternative to an `until` clock time
 * `warmup.set_location_mode` for whole-location off, frost, and resume-schedule
 * `warmup.set_holiday` and `warmup.cancel_holiday`
@@ -32,6 +35,9 @@ Recent features from development that have not been formally released yet:
 
 ### Fixed
 
+* A dropped connection is retried, and a poll that returns no locations keeps the previous device list instead of clearing the house.
+* One malformed room no longer drops the other thermostats on the account.
+* Entities go unavailable when the poll fails, instead of sitting on the last heating state.
 * Heating state uses the relay flag when Warmup provides it, and otherwise reports idle once the room reaches its target.
 * `warmup.set_override` converts Fahrenheit and Kelvin into the Celsius value the API requires.
 * Login failures name an invalid email or password instead of following up with "access token is not set". An expired token is refreshed once.
@@ -45,7 +51,7 @@ Recent features from development that have not been formally released yet:
 
 ### Deprecated
 
-* 
+* The YAML `climate: platform: warmup` block. It is imported into a config entry and can then be removed.
 
 ### Removed
 

@@ -1,17 +1,10 @@
-"""Platform that offers a connection to a warmup device."""
+"""Climate entities for Warmup thermostats."""
+
 from datetime import datetime, timedelta
 import logging
-from typing import Any, Dict
+from typing import Any
 
 import voluptuous as vol
-from .warmup4ie import Warmup4IE, Warmup4IEDevice
-from .warmup4ie.warmup4ie import (
-    infer_hvac_action,
-    location_selected,
-    minutes_until,
-    resolve_displayed_target,
-    to_celsius,
-)
 
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity
 from homeassistant.components.climate.const import (
@@ -22,60 +15,36 @@ from homeassistant.components.climate.const import (
     PRESET_HOME,
     ClimateEntityFeature,
 )
+from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import (
-    ATTR_ENTITY_ID,
     ATTR_TEMPERATURE,
     CONF_PASSWORD,
     CONF_USERNAME,
     PRECISION_HALVES,
     UnitOfTemperature,
-    MAJOR_VERSION, 
-    MINOR_VERSION,
 )
-
-from homeassistant.exceptions import InvalidStateError, PlatformNotReady
-from homeassistant.helpers import discovery
+from homeassistant.exceptions import InvalidStateError
 import homeassistant.helpers.config_validation as cv
-from homeassistant.util import Throttle
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-""" temperature utility will stop working in HA 2023.4. Removed it for now, as CELCIUS is the only temperature standard this module supports anyway. """
-# from homeassistant.util.temperature import convert as convert_temperature
-
-DOMAIN = "warmup"
-CONFIG_SCHEMA = vol.Schema(
-    {
-        DOMAIN: vol.Schema(
-            {
-                vol.Required(CONF_USERNAME): cv.string,
-                vol.Required(CONF_PASSWORD): cv.string,
-            }
-        )
-    },
-    extra=vol.ALLOW_EXTRA,
+from .const import (
+    BOOST_MINUTES,
+    CONF_LOCATION,
+    CONST_MODE_AWAY,
+    CONST_MODE_FIXED,
+    CONST_MODE_FROST,
+    CONST_MODE_OFF,
+    CONST_MODE_PROGRAM,
+    DOMAIN,
 )
+from .entity import ensure_location_device, thermostat_device_info
+from .warmup4ie.warmup4ie import infer_hvac_action, resolve_displayed_target
 
 _LOGGER = logging.getLogger(__name__)
 
-ATTR_UNTIL = "until"
-ATTR_DURATION = "duration"
-ATTR_DAYS = "days"
-ATTR_MODE = "mode"
-
-CONF_LOCATION = "location"
-CONF_TARGET_TEMP = "target_temp"
 PENDING_TARGET_WINDOW = timedelta(seconds=20)
-BOOST_MINUTES = 60
 
-DEFAULT_NAME = "warmup4ie"
-DEFAULT_TARGET_TEMP = 20
-
-CONST_MODE_PROGRAM = "prog"  # Default room mode (treated as Home/Auto)
-CONST_MODE_FIXED = "fixed"  # Fixed temperature mode (treated as Home/Heat)
-CONST_MODE_AWAY = "away"  # WarmUp Geo Away or Holiday Mode (treated as Away/Auto)
-CONST_MODE_FROST = "frost"  # Frost Mode (treated as Away/Heat)
-CONST_MODE_OFF = "off"  # Switch off heating in a zone
-
-HVAC_MAP_WARMUP_HEAT = {
+HVAC_MAP = {
     CONST_MODE_PROGRAM: HVACMode.AUTO,
     CONST_MODE_FIXED: HVACMode.HEAT,
     "override": HVACMode.HEAT,
@@ -89,8 +58,13 @@ HVAC_ACTION_MAP = {
     "idle": HVACAction.IDLE,
 }
 
-SUPPORT_FLAGS = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE | ClimateEntityFeature.TURN_ON |ClimateEntityFeature.TURN_OFF
-SUPPORT_HVAC_HEAT = [HVACMode.HEAT, HVACMode.AUTO, HVACMode.OFF]
+SUPPORT_FLAGS = (
+    ClimateEntityFeature.TARGET_TEMPERATURE
+    | ClimateEntityFeature.PRESET_MODE
+    | ClimateEntityFeature.TURN_ON
+    | ClimateEntityFeature.TURN_OFF
+)
+SUPPORT_HVAC = [HVACMode.HEAT, HVACMode.AUTO, HVACMode.OFF]
 SUPPORT_PRESET = [PRESET_AWAY, PRESET_HOME, PRESET_BOOST]
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
@@ -101,173 +75,100 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     }
 )
 
-MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=60)
 
-
-def _entities_for(hass, call):
-    """Return climate entities selected by entity_id, or every Warmup entity."""
-    entities = hass.data[DOMAIN]["entities"]
-    raw = call.data.get(ATTR_ENTITY_ID)
-    if not raw:
-        return list(entities)
-    wanted = {raw} if isinstance(raw, str) else set(raw)
-    return [entity for entity in entities if entity.entity_id in wanted]
-
-
-def _location_ids(hass, call):
-    """Return location ids touched by a service call."""
-    wanted = call.data.get(CONF_LOCATION)
-    found = {}
-    for entity in _entities_for(hass, call):
-        name = entity.device.get_location_name()
-        if location_selected(name, wanted):
-            found[entity.device.get_location_id()] = name
-    return found
-
-
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Set up the climate devices."""
-    hass.data.setdefault(DOMAIN, {})
-
-    def service_set_override(call):
-        """Hold the selected rooms at a temperature for a duration."""
-        temperature = call.data.get(ATTR_TEMPERATURE)
-        if temperature is None:
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    """Import the legacy YAML climate block into a config entry."""
+    username = str(config[CONF_USERNAME]).strip().lower()
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        existing = str(entry.data.get(CONF_USERNAME, "")).strip().lower()
+        if entry.unique_id == username or existing == username:
             return
-        temperature = to_celsius(temperature, hass.config.units.temperature_unit)
-        duration = call.data.get(ATTR_DURATION)
-        until = call.data.get(ATTR_UNTIL)
-        if duration is not None:
-            minutes = int(duration)
-        elif until:
-            minutes = minutes_until(str(until), datetime.now())
-        else:
-            minutes = 60
-        minutes = min(1440, max(1, minutes))
-        for target_device in _entities_for(hass, call):
-            target_device.set_override(temperature, minutes)
-            target_device.schedule_update_ha_state(True)
-
-    def service_set_location_mode(call):
-        """Change every room at a location. Off here is the whole-home control."""
-        mode = call.data.get(ATTR_MODE)
-        account = hass.data[DOMAIN]["account"]
-        for location_id in _location_ids(hass, call):
-            if mode == CONST_MODE_OFF:
-                account.set_location_to_off(location_id)
-            elif mode == CONST_MODE_FROST:
-                account.set_location_to_frost(location_id)
-            elif mode in (CONST_MODE_PROGRAM, "auto", "schedule"):
-                account.set_location_to_auto(location_id)
-            else:
-                _LOGGER.error("Unknown Warmup location mode %s", mode)
-        for target_device in _entities_for(hass, call):
-            target_device.schedule_update_ha_state(True)
-
-    def service_set_holiday(call):
-        """Start holiday mode for each selected location."""
-        temperature = to_celsius(
-            call.data.get(ATTR_TEMPERATURE, 5), hass.config.units.temperature_unit
+    _LOGGER.warning(
+        "Warmup YAML configuration is imported into Settings > Devices & services. "
+        "Remove the climate warmup block after the entry exists"
+    )
+    hass.async_create_task(
+        hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_USERNAME: config[CONF_USERNAME],
+                CONF_PASSWORD: config[CONF_PASSWORD],
+                CONF_LOCATION: config.get(CONF_LOCATION),
+            },
         )
-        days = int(call.data.get(ATTR_DAYS, 7))
-        account = hass.data[DOMAIN]["account"]
-        for location_id in _location_ids(hass, call):
-            account.set_holiday(location_id, temperature, days)
-        for target_device in _entities_for(hass, call):
-            target_device.schedule_update_ha_state(True)
-
-    def service_cancel_holiday(call):
-        """Cancel holiday mode for each selected location."""
-        account = hass.data[DOMAIN]["account"]
-        for location_id in _location_ids(hass, call):
-            account.cancel_holiday(location_id)
-        for target_device in _entities_for(hass, call):
-            target_device.schedule_update_ha_state(True)
-
-    _LOGGER.info("Setting up platform for Warmup component")
-    user = config.get(CONF_USERNAME)
-    password = config.get(CONF_PASSWORD)
-    wanted_location = config.get(CONF_LOCATION)
-
-    warmup = Warmup4IE(user, password)
-
-    if warmup is None or not warmup.setup_finished:
-        raise PlatformNotReady
-    warmup_client = WarmupClient(warmup)
-    devices = []
-    to_add = []
-    for device in warmup.get_all_devices().values():
-        if not location_selected(device.get_location_name(), wanted_location):
-            continue
-        devices.append(device)
-        to_add.append(WarmupThermostat(hass, device, warmup_client))
-    add_entities(to_add)
-    hass.data[DOMAIN]["account"] = warmup
-    hass.data[DOMAIN]["client"] = warmup_client
-    hass.data[DOMAIN]["devices"] = devices
-    hass.data[DOMAIN]["entities"] = to_add
-    hass.services.register(DOMAIN, "set_override", service_set_override)
-    hass.services.register(DOMAIN, "set_location_mode", service_set_location_mode)
-    hass.services.register(DOMAIN, "set_holiday", service_set_holiday)
-    hass.services.register(DOMAIN, "cancel_holiday", service_cancel_holiday)
-    try:
-        discovery.load_platform(hass, "sensor", DOMAIN, {}, config)
-    except Exception as err:
-        _LOGGER.warning("Warmup temperature sensors were not created: %s", err)
-    return True
+    )
 
 
-class WarmupClient:
-    """Wrapper around the API client to throttle requests."""
+async def async_setup_entry(hass, entry, async_add_entities):
+    """Add one climate entity per thermostat, and add new ones that appear later."""
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    coordinator = runtime["coordinator"]
+    known = set()
 
-    def __init__(self, warmup: Warmup4IE):
-        """Initialise wrapper."""
-        self._warmup = warmup
+    def _new_entities():
+        fresh = []
+        for serial, device in (coordinator.data or {}).items():
+            if serial in known:
+                continue
+            known.add(serial)
+            ensure_location_device(hass, entry, device)
+            fresh.append(WarmupThermostat(coordinator, serial))
+        if fresh:
+            runtime["entities"].extend(fresh)
+            async_add_entities(fresh)
 
-    @Throttle(MIN_TIME_BETWEEN_UPDATES)
-    def update(self):
-        """Throttles calls to the warmup client update method."""
-        _LOGGER.debug("Updating Warmup devices")
-        self._warmup.update_all_devices()
+    _new_entities()
+    entry.async_on_unload(coordinator.async_add_listener(_new_entities))
 
 
-class WarmupThermostat(ClimateEntity):
-    """Representation of a Warmup device."""
+class WarmupThermostat(CoordinatorEntity, ClimateEntity):
+    """One Warmup room."""
 
-    def __init__(self, hass, device: Warmup4IEDevice, client: WarmupClient):
-        """Initialize the climate device."""
-        _LOGGER.info("Setting up Warmup Thermostat %s", device.get_room_name())
-        self._device = device
-        self._client = client
+    _attr_has_entity_name = True
+    _attr_name = None
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_supported_features = SUPPORT_FLAGS
+    _attr_hvac_modes = SUPPORT_HVAC
+    _attr_preset_modes = SUPPORT_PRESET
+    _attr_target_temperature_step = PRECISION_HALVES
 
-        self.attributes = {}
-        self._update_attributes_from_device()
-
-        self._current_temperature = device.current_temperature
-        self._target_temperature = device.target_temperature
-        self._min_temp = device.min_temp
-        self._max_temp = device.max_temp
-        self._name = device.get_room_name()
-        self._attr_unique_id = "warmup_" + device.get_serial_number()
-
-        self._current_operation_mode = device.run_mode
-        self._away = False
-        self._on = True
+    def __init__(self, coordinator, serial):
+        """Attach this entity to a thermostat already returned by the coordinator."""
+        super().__init__(coordinator)
+        self._serial = serial
+        device = coordinator.data[serial]
+        self._attr_unique_id = "warmup_%s" % serial
+        self._attr_device_info = thermostat_device_info(device)
         self._pending_target = None
         self._pending_deadline = None
-
-        # https://developers.home-assistant.io/blog/2024/01/24/climate-climateentityfeatures-expanded
-        self._enable_turn_on_off_backwards_compatibility = False
+        self._target_temperature = device.target_temperature
+        self._current_temperature = device.current_temperature
+        self._current_operation_mode = device.run_mode
+        self._min_temp = device.min_temp
+        self._max_temp = device.max_temp
+        self._on = device.run_mode != CONST_MODE_OFF
+        self._away = device.run_mode in (CONST_MODE_AWAY, CONST_MODE_FROST)
 
     @property
     def device(self):
-        """Return the Warmup device wrapped by this entity."""
-        return self._device
+        """Return the live thermostat, or None when this poll did not include it."""
+        return (self.coordinator.data or {}).get(self._serial)
 
     @property
-    def name(self):
-        """Return the name of the climate device."""
-        return self._name
+    def available(self):
+        """Unavailable when the shared poll failed or this thermostat disappeared."""
+        return super().available and self.device is not None
+
+    def remember_target(self, temperature, mode):
+        """Show a command immediately, before the next poll confirms it."""
+        self._pending_target = float(temperature)
+        self._pending_deadline = datetime.now() + PENDING_TARGET_WINDOW
+        self._target_temperature = float(temperature)
+        self._current_operation_mode = mode
+        self._on = True
+        self._away = False
+        self.async_write_ha_state()
 
     @property
     def current_temperature(self):
@@ -280,24 +181,26 @@ class WarmupThermostat(ClimateEntity):
         return self._target_temperature
 
     @property
-    def hvac_mode(self):
-        """Return hvac operation ie. heat, cool mode.
+    def min_temp(self):
+        """Return the minimum temperature."""
+        return self._min_temp
 
-        Need to be one of HVACMode.
-        """
-        return HVAC_MAP_WARMUP_HEAT.get(self._current_operation_mode, HVACMode.AUTO)
+    @property
+    def max_temp(self):
+        """Return the maximum temperature."""
+        return self._max_temp
+
+    @property
+    def hvac_mode(self):
+        """Return heat, auto, or off."""
+        return HVAC_MAP.get(self._current_operation_mode, HVACMode.AUTO)
 
     @property
     def hvac_action(self):
-        """Return whether the relay is heating, idle, or off.
-
-        The thermostat's outputStatus flag is the relay itself. When Warmup
-        does not send it, a room below its target is treated as heating and a
-        room at or above its target is idle.
-        """
+        """Return heating only when the relay is on, or the room is below target."""
         action = infer_hvac_action(
             self._on,
-            self._device.output_status,
+            None if self.device is None else self.device.output_status,
             self._current_temperature,
             self._target_temperature,
         )
@@ -305,7 +208,7 @@ class WarmupThermostat(ClimateEntity):
 
     @property
     def preset_mode(self):
-        """Return the current preset mode, e.g., home, away, temp."""
+        """Return home, away, or boost."""
         if self._current_operation_mode == "override":
             return PRESET_BOOST
         if self._away:
@@ -313,106 +216,100 @@ class WarmupThermostat(ClimateEntity):
         return PRESET_HOME
 
     @property
-    def preset_modes(self):
-        """Return a list of available preset modes."""
-        return SUPPORT_PRESET
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the extra Warmup readings on the climate entity."""
+        device = self.device
+        if device is None:
+            return {}
+        return {
+            "floor_temperature": device.floor_temperature,
+            "air_temperature": device.air_temperature,
+            "away_temperature": device.away_temperature,
+            "comfort_temperature": device.comfort_temperature,
+            "cost": device.cost,
+            "energy": device.energy,
+            "energy_total": device.energy_total,
+            "output_status": device.output_status,
+            "floor_temperature_2": device.floor_temperature_2,
+            "fixed_temperature": device.fixed_temperature,
+            "override_temperature": device.override_temperature,
+            "override_duration_mins": device.override_duration_mins,
+            "sleep_temperature": device.sleep_temperature,
+            "run_mode": device.run_mode,
+            "room_mode": device.room_mode,
+            "heating_target": device.heating_target,
+        }
 
-    def set_preset_mode(self, preset_mode):
-        """Set new preset mode."""
-
+    async def async_set_preset_mode(self, preset_mode):
+        """Set home, away, or boost for this room only."""
+        device = self.device
+        if device is None:
+            return
         if preset_mode == PRESET_HOME:
-            """Turn away mode off."""
             self._away = False
-            self._device.set_temperature_to_auto()
             self._current_operation_mode = CONST_MODE_PROGRAM
-
+            self.async_write_ha_state()
+            await self.hass.async_add_executor_job(device.set_temperature_to_auto)
         elif preset_mode == PRESET_AWAY:
-            """Turn frost protection on for this room only."""
             self._away = True
-            self._device.set_room_to_frost()
             self._current_operation_mode = CONST_MODE_FROST
-
+            self.async_write_ha_state()
+            await self.hass.async_add_executor_job(device.set_room_to_frost)
         elif preset_mode == PRESET_BOOST:
-            temperature = self._device.comfort_temperature or self._target_temperature
+            temperature = device.comfort_temperature or self._target_temperature
             if not temperature:
                 raise InvalidStateError
-            self.set_override(temperature, BOOST_MINUTES)
-
+            self.remember_target(temperature, "override")
+            await self.hass.async_add_executor_job(
+                device.set_override, temperature, BOOST_MINUTES
+            )
         else:
             raise InvalidStateError
+        await self.coordinator.async_request_refresh()
 
-    def set_temperature(self, **kwargs):
-        """Set new target temperatures."""
+    async def async_set_temperature(self, **kwargs):
+        """Set a fixed target for this room."""
         temperature = kwargs.get(ATTR_TEMPERATURE)
-        if temperature is None:
+        device = self.device
+        if temperature is None or device is None:
             return
+        self.remember_target(temperature, CONST_MODE_FIXED)
+        await self.hass.async_add_executor_job(device.set_new_temperature, temperature)
+        await self.coordinator.async_request_refresh()
 
-        # Keep the requested target on the entity until Warmup's next poll
-        # reports it. A slower response used to overwrite the card with the
-        # previous setpoint while the user was still tapping plus.
-        self._pending_target = temperature
-        self._pending_deadline = datetime.now() + PENDING_TARGET_WINDOW
-        self._target_temperature = temperature
-        self._current_operation_mode = CONST_MODE_FIXED
-        self._on = True
-        self._away = False
-        self._device.set_new_temperature(temperature)
-
-    def set_hvac_mode(self, hvac_mode):
-        """Set new target hvac mode.
-
-        Switch device on if was previously off
-        """
-
+    async def async_set_hvac_mode(self, hvac_mode):
+        """Change this room. Off does not turn off the other rooms."""
+        device = self.device
+        if device is None:
+            return
         if hvac_mode == HVACMode.OFF:
             self._on = False
-            self._device.set_room_off()
             self._current_operation_mode = CONST_MODE_OFF
-
+            self.async_write_ha_state()
+            await self.hass.async_add_executor_job(device.set_room_off)
         elif hvac_mode == HVACMode.AUTO:
             self._on = True
-            self._device.set_temperature_to_auto()
             self._current_operation_mode = CONST_MODE_PROGRAM
-
+            self.async_write_ha_state()
+            await self.hass.async_add_executor_job(device.set_temperature_to_auto)
         elif hvac_mode == HVACMode.HEAT:
             self._on = True
-            self._device.set_temperature_to_manual()
             self._current_operation_mode = CONST_MODE_FIXED
-
+            self.async_write_ha_state()
+            await self.hass.async_add_executor_job(device.set_temperature_to_manual)
         else:
             raise InvalidStateError
+        await self.coordinator.async_request_refresh()
 
-    def turn_on(self) -> None:
-        """Turn the entity on."""
-        self.set_hvac_mode(HVACMode.AUTO)
-
-    def turn_off(self) -> None:
-        """Turn the entity off."""
-        self.set_hvac_mode(HVACMode.OFF)
-
-    def set_override(self, temperature, minutes):
-        """Hold this room at ``temperature`` °C for ``minutes``."""
-        self._device.set_override(temperature, minutes)
-        self._current_operation_mode = "override"
-        self._on = True
-        self._away = False
-        self._pending_target = temperature
-        self._pending_deadline = datetime.now() + PENDING_TARGET_WINDOW
-
-    def update(self):
-        """Fetch new state data for this device.
-
-        This is the only method that should fetch new data for Home Assistant.
-        """
-        try:
-            self._client.update()
-        except Exception as err:
-            _LOGGER.warning("Warmup update failed for %s: %s", self._name, err)
+    def _handle_coordinator_update(self):
+        """Apply a poll without letting a stale target overwrite a recent command."""
+        device = self.device
+        if device is None:
+            self.async_write_ha_state()
             return
-
-        device_mode = self._device.get_run_mode()
+        device_mode = device.get_run_mode()
         displayed, pending = resolve_displayed_target(
-            self._device.target_temperature,
+            device.target_temperature,
             self._pending_target,
             datetime.now(),
             self._pending_deadline,
@@ -424,93 +321,9 @@ class WarmupThermostat(ClimateEntity):
             self._current_operation_mode = device_mode
         if displayed is not None:
             self._target_temperature = displayed
-        self._current_temperature = self._device.current_temperature
-        self._min_temp = self._device.min_temp
-        self._max_temp = self._device.max_temp
-
-        self._update_attributes_from_device()
-
-        # set whether device is in away mode
-        if (
-            self._current_operation_mode == CONST_MODE_AWAY
-            or self._current_operation_mode == CONST_MODE_FROST
-        ):
-            self._away = True
-        else:
-            self._away = False
-
-        # set whether device is on/off
-        if self._current_operation_mode == CONST_MODE_OFF:
-            self._on = False
-        else:
-            self._on = True
-
-    def _update_attributes_from_device(self):
-        _attributes = {
-            "floor_temperature": self._device.floor_temperature,
-            "air_temperature": self._device.air_temperature,
-            "away_temperature": self._device.away_temperature,
-            "comfort_temperature": self._device.comfort_temperature,
-            "cost": self._device.cost,
-            "energy": self._device.energy,
-            "energy_total": self._device.energy_total,
-            "output_status": self._device.output_status,
-            "floor_temperature_2": self._device.floor_temperature_2,
-            "fixed_temperature": self._device.fixed_temperature,
-            "override_temperature": self._device.override_temperature,
-            "override_duration_mins": self._device.override_duration_mins,
-            "sleep_temperature": self._device.sleep_temperature,
-            "run_mode": self._device.run_mode,
-            "room_mode": self._device.room_mode,
-            "heating_target": self._device.heating_target,
-        }
-        self.attributes = _attributes
-
-    @property
-    def state_attributes(self) -> Dict[str, Any]:
-        """Return the optional state attributes."""
-        return {**super(WarmupThermostat, self).state_attributes, **self.attributes}
-
-    @property
-    def min_temp(self):
-        """Return the minimum temperature."""
-        # return convert_temperature(
-        #    self._device.min_temp, UnitOfTemperature.CELSIUS, self.hass.config.units.temperature_unit
-        # )
-        return self._device.min_temp
-
-    @property
-    def max_temp(self):
-        """Return the maximum temperature."""
-        # return convert_temperature(
-        #     self._device.max_temp, UnitOfTemperature.CELSIUS, self.hass.config.units.temperature_unit
-        # )
-        return self._device.max_temp
-
-    @property
-    def supported_features(self):
-        """Return the list of supported features."""
-        return SUPPORT_FLAGS
-
-    @property
-    def should_poll(self):
-        """Return the polling state."""
-        return True
-
-    @property
-    def temperature_unit(self):
-        """Return the unit of measurement."""
-        return UnitOfTemperature.CELSIUS
-
-    @property
-    def target_temperature_step(self):
-        """Return the supported step of target temperature."""
-        return PRECISION_HALVES
-
-    @property
-    def hvac_modes(self):
-        """Return the list of available hvac operation modes.
-
-        Need to be a subset of HVAC_MODES.
-        """
-        return SUPPORT_HVAC_HEAT
+        self._current_temperature = device.current_temperature
+        self._min_temp = device.min_temp
+        self._max_temp = device.max_temp
+        self._away = self._current_operation_mode in (CONST_MODE_AWAY, CONST_MODE_FROST)
+        self._on = self._current_operation_mode != CONST_MODE_OFF
+        self.async_write_ha_state()

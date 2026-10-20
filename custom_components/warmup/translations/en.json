@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Warmup",
+        "description": "Use the email and password for the my.warmup.com account that owns the thermostats.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "locations": {
+        "title": "Warmup locations",
+        "description": "This account has more than one location. Choose the locations to add.",
+        "data": {
+          "locations": "Locations"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect Warmup",
+        "description": "Warmup rejected the saved login for {username}. Enter the current password.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Warmup rejected that email or password.",
+      "cannot_connect": "Warmup could not be reached. Try again in a moment.",
+      "no_devices": "The account signed in, but no thermostats were returned.",
+      "unknown": "Something unexpected happened while talking to Warmup."
+    },
+    "abort": {
+      "already_configured": "This Warmup account is already configured.",
+      "reauth_successful": "Warmup login updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Warmup options",
+        "data": {
+          "scan_interval": "How often to refresh, in seconds"
+        }
+      }
+    }
+  }
+}

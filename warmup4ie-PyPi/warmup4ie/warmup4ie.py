@@ -25,6 +25,7 @@ as explicit account methods.
 
 import logging
 import re
+import threading
 from datetime import timedelta
 
 import requests
@@ -71,6 +72,8 @@ HEATING_TARGET_FROM_API = {"floor": "floor", "air": "air"}
 # An unwired probe is reported as 90.0°C (900 tenths), which is not a reading.
 NO_PROBE_TENTHS = 900
 REQUEST_TIMEOUT = 20
+REQUEST_ATTEMPTS = 3
+RETRY_STATUS = {429, 500, 502, 503, 504}
 _NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
 _TOKEN_ERROR = re.compile(r"token|unauthor|forbidden|\bauth", re.IGNORECASE)
 
@@ -108,6 +111,7 @@ query Devices {
           floor2Temp
           heatingTarget
           heatingTargetInt
+          appFw
           parameters { outputStatus }
         }
       }
@@ -242,6 +246,30 @@ def location_selected(device_location, wanted):
     return device_location.strip().casefold() == str(wanted).strip().casefold()
 
 
+class WarmupError(Exception):
+    """Base error for a Warmup API call."""
+
+
+class WarmupAuthError(WarmupError):
+    """The account login was rejected or the access token is no longer valid."""
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
+
+
+class WarmupConnectionError(WarmupError):
+    """Warmup could not be reached, or the response could not be used."""
+
+
+def device_identity(device):
+    """Return the stable id for one thermostat, preferring its serial number."""
+    serial = device.get_serial_number()
+    if serial:
+        return str(serial)
+    return "%s-%s" % (device.get_location_id(), device.get_room_id())
+
+
 def to_celsius(value, unit):
     """Convert a Home Assistant temperature into Celsius for the Warmup API."""
     temperature = float(value)
@@ -306,12 +334,13 @@ class Warmup4IE:
         self._password = password
         self._warmup_access_token = None
         self.setup_finished = False
+        self.last_error = None
+        self._lock = threading.RLock()
         self._locations = {}
         self._rooms = {}
         self._all_devices = {}
         if self.connect():
-            self.update_all_devices()
-            self.setup_finished = True
+            self.setup_finished = self.update_all_devices() is not None
 
     def connect(self):
         """Retrieve an access token from the Warmup login API."""
@@ -330,39 +359,71 @@ class Warmup4IE:
         if status != "success":
             code = (payload.get("response") or {}).get("errorCode")
             if code == 101:
-                _LOGGER.error(
-                    "Warmup login failed: invalid email or password (errorCode 101)"
-                )
+                message = "invalid email or password (errorCode 101)"
             else:
-                _LOGGER.error("Warmup login failed, errorCode %s", code)
+                message = "Warmup login failed, errorCode %s" % code
+            _LOGGER.error("Warmup login failed: %s", message)
             self._warmup_access_token = None
+            self.last_error = WarmupAuthError(message, code=code)
             return False
         token = (payload.get("response") or {}).get("token")
         if not token:
             _LOGGER.error("Warmup login response did not include a token")
             self._warmup_access_token = None
+            self.last_error = WarmupAuthError("login response did not include a token")
             return False
         self._warmup_access_token = token
+        self.last_error = None
         return True
 
     def _post(self, url, body, headers):
-        """POST JSON and return the decoded body, or None when the call fails."""
-        try:
-            response = requests.post(
-                url=url, headers=headers, json=body, timeout=REQUEST_TIMEOUT
-            )
-        except requests.RequestException as err:
-            _LOGGER.warning("Warmup request failed: %s", err)
-            return None
-        if response.status_code == 401:
-            return {"errors": [{"message": "unauthorized"}]}
-        try:
-            return response.json()
-        except ValueError:
-            _LOGGER.warning(
-                "Warmup returned a non-JSON response (%s)", response.status_code
-            )
-            return None
+        """POST JSON and return the decoded body, or None when the call fails.
+
+        A timeout or a gateway error is retried. The Warmup cloud drops
+        connections often enough that one attempt made the integration look down.
+        """
+        for attempt in range(1, REQUEST_ATTEMPTS + 1):
+            try:
+                response = requests.post(
+                    url=url, headers=headers, json=body, timeout=REQUEST_TIMEOUT
+                )
+            except requests.RequestException as err:
+                self.last_error = WarmupConnectionError(str(err))
+                if attempt == REQUEST_ATTEMPTS:
+                    _LOGGER.warning("Warmup request failed: %s", err)
+                else:
+                    _LOGGER.debug(
+                        "Warmup request failed (%s/%s): %s",
+                        attempt,
+                        REQUEST_ATTEMPTS,
+                        err,
+                    )
+                continue
+            if response.status_code in RETRY_STATUS and attempt < REQUEST_ATTEMPTS:
+                self.last_error = WarmupConnectionError(
+                    "HTTP %s" % response.status_code
+                )
+                _LOGGER.debug(
+                    "Warmup HTTP %s, retrying (%s/%s)",
+                    response.status_code,
+                    attempt,
+                    REQUEST_ATTEMPTS,
+                )
+                continue
+            if response.status_code == 401:
+                self.last_error = WarmupAuthError("unauthorized", code=401)
+                return {"errors": [{"message": "unauthorized"}]}
+            try:
+                return response.json()
+            except ValueError:
+                self.last_error = WarmupConnectionError(
+                    "non-JSON response (%s)" % response.status_code
+                )
+                _LOGGER.warning(
+                    "Warmup returned a non-JSON response (%s)", response.status_code
+                )
+                return None
+        return None
 
     def _graphql(self, query, variables, allow_refresh=True):
         """Run one GraphQL operation, refreshing the access token once if it expired."""
@@ -385,6 +446,9 @@ class Warmup4IE:
                 self._warmup_access_token = None
                 if self.connect():
                     return self._graphql(query, variables, allow_refresh=False)
+                self.last_error = WarmupAuthError(message)
+                return None
+            self.last_error = WarmupError(message)
             _LOGGER.error("Warmup GraphQL error: %s", message)
             return None
         status = payload.get("status")
@@ -398,10 +462,11 @@ class Warmup4IE:
 
     def _mutation(self, query, variables):
         """Return True when a mutation is accepted."""
-        data = self._graphql(query, variables)
-        if not data:
-            return False
-        return all(value is not False for value in data.values())
+        with self._lock:
+            data = self._graphql(query, variables)
+            if not data:
+                return False
+            return all(value is not False for value in data.values())
 
     def get_locations(self):
         """Return the locations found by the last device update."""
@@ -442,38 +507,72 @@ class Warmup4IE:
 
     def update_all_devices(self):
         """Update all devices that are registered with this account."""
-        data = self._graphql(GQL_DEVICES, {})
-        if data is None:
-            return None
-        user = data.get("user") or {}
-        locations = user.get("allLocations") or []
+        with self._lock:
+            data = self._graphql(GQL_DEVICES, {})
+            if data is None:
+                if self.last_error is None:
+                    self.last_error = WarmupConnectionError("Warmup update failed")
+                return None
+            user = data.get("user") or {}
+            locations = user.get("allLocations") or []
+            if not locations and self._all_devices:
+                _LOGGER.warning(
+                    "Warmup returned no locations; keeping the previous device list"
+                )
+                self.last_error = None
+                return self._all_devices
 
-        for location in locations:
-            self._locations[location["id"]] = location["name"]
-            for room in location.get("rooms") or []:
-                self._rooms[room["id"]] = room["roomName"]
-                for thermostat in room.get("thermostat4ies") or []:
-                    key = (location["id"], room["id"], thermostat.get("id"))
-                    device_to_update = self._all_devices.get(key)
-                    if device_to_update is None:
-                        _LOGGER.info(
-                            "Found thermostat with SN %s, name %s in location %s ",
-                            thermostat.get("deviceSN"),
-                            room.get("roomName"),
+            seen = set()
+            for location in locations:
+                try:
+                    self._locations[location["id"]] = location["name"]
+                except (KeyError, TypeError) as err:
+                    _LOGGER.warning("Skipping a Warmup location: %s", err)
+                    continue
+                for room in location.get("rooms") or []:
+                    try:
+                        seen.update(self._read_room(location, room))
+                    except (KeyError, TypeError, ValueError) as err:
+                        _LOGGER.warning(
+                            "Skipping a Warmup room in %s: %s",
                             location.get("name"),
+                            err,
                         )
-                        device_to_update = Warmup4IEDevice(
-                            location["id"],
-                            location["name"],
-                            room["id"],
-                            room["roomName"],
-                            thermostat.get("id"),
-                            thermostat.get("deviceSN"),
-                            self,
-                        )
-                        self._all_devices[key] = device_to_update
-                    device_to_update.update_room(room, thermostat)
-        return self._all_devices
+            for key in [key for key in self._all_devices if key not in seen]:
+                _LOGGER.info("Warmup no longer reports thermostat %s", key)
+                del self._all_devices[key]
+            self.last_error = None
+            return self._all_devices
+
+    def _read_room(self, location, room):
+        """Store every thermostat in one room. A bad room raises for the caller."""
+        self._rooms[room["id"]] = room["roomName"]
+        keys = set()
+        for thermostat in room.get("thermostat4ies") or []:
+            if not isinstance(thermostat, dict):
+                raise TypeError("thermostat payload was not an object")
+            key = (location["id"], room["id"], thermostat.get("id"))
+            device_to_update = self._all_devices.get(key)
+            if device_to_update is None:
+                _LOGGER.info(
+                    "Found thermostat with SN %s, name %s in location %s ",
+                    thermostat.get("deviceSN"),
+                    room.get("roomName"),
+                    location.get("name"),
+                )
+                device_to_update = Warmup4IEDevice(
+                    location["id"],
+                    location["name"],
+                    room["id"],
+                    room["roomName"],
+                    thermostat.get("id"),
+                    thermostat.get("deviceSN"),
+                    self,
+                )
+                self._all_devices[key] = device_to_update
+            device_to_update.update_room(room, thermostat)
+            keys.add(key)
+        return keys
 
     def set_override(self, room_id, temperature, minutes, location_id):
         """Hold one room at ``temperature`` °C for ``minutes``."""
@@ -649,6 +748,7 @@ class Warmup4IEDevice:
         self.room_mode = None
         self.heating_target = None
         self.output_status = None
+        self.firmware = None
 
     def get_run_mode(self):
         """return current mode, e.g. 'off', 'fixed', 'prog'."""
@@ -694,6 +794,8 @@ class Warmup4IEDevice:
             self.output_status = int(parameters["outputStatus"])
         else:
             self.output_status = None
+        firmware = thermostat.get("appFw")
+        self.firmware = str(firmware) if firmware else None
 
     def get_target_temperature(self):
         """return target temperature"""

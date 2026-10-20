@@ -270,3 +270,158 @@ def test_location_filter_matches_names_without_case():
 def test_fahrenheit_service_values_are_converted_to_celsius():
     assert api.to_celsius(70, "°F") == 21.11111111111111
     assert api.to_celsius(21.5, "°C") == 21.5
+
+
+def _room(room_id, name, serial):
+    return {
+        "id": room_id,
+        "roomName": name,
+        "targetTemp": 200,
+        "currentTemp": 190,
+        "awayTemp": 160,
+        "comfortTemp": 220,
+        "cost": "0.1",
+        "energy": "1",
+        "fixedTemp": 200,
+        "overrideTemp": 0,
+        "overrideDur": 0,
+        "sleepTemp": 180,
+        "runMode": "fixed",
+        "thermostat4ies": [
+            {
+                "id": room_id,
+                "deviceSN": serial,
+                "minTemp": 50,
+                "maxTemp": 300,
+                "airTemp": 190,
+                "floor1Temp": 210,
+                "floor2Temp": None,
+                "heatingTargetInt": 0,
+                "appFw": "1.2.3",
+            }
+        ],
+    }
+
+
+def test_a_bad_room_does_not_drop_the_rest_of_the_account():
+    payload = {
+        "status": "success",
+        "data": {
+            "user": {
+                "allLocations": [
+                    {
+                        "id": 10,
+                        "name": "Home",
+                        "rooms": [
+                            _room(1, "Kitchen", "SN-KITCHEN"),
+                            {"roomName": "Broken"},
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+
+    def post(url, headers=None, json=None, timeout=None):
+        if json and json.get("request", {}).get("method") == "userLogin":
+            return _response(
+                {"status": {"result": "success"}, "response": {"token": "TOK"}}
+            )
+        return _response(payload)
+
+    with mock.patch.object(api.requests, "post", side_effect=post):
+        client = api.Warmup4IE("user@example.com", "secret")
+
+    assert client.setup_finished is True
+    assert client.last_error is None
+    devices = list(client.get_all_devices().values())
+    assert len(devices) == 1
+    assert devices[0].get_serial_number() == "SN-KITCHEN"
+    assert devices[0].firmware == "1.2.3"
+    assert api.device_identity(devices[0]) == "SN-KITCHEN"
+
+
+def test_a_dropped_connection_is_retried_once():
+    graphql_calls = {"n": 0}
+
+    def post(url, headers=None, json=None, timeout=None):
+        if json and json.get("request", {}).get("method") == "userLogin":
+            return _response(
+                {"status": {"result": "success"}, "response": {"token": "TOK"}}
+            )
+        graphql_calls["n"] += 1
+        if graphql_calls["n"] == 1:
+            raise requests.Timeout("timed out")
+        return _response(
+            {
+                "status": "success",
+                "data": {
+                    "user": {
+                        "allLocations": [
+                            {"id": 10, "name": "Home", "rooms": [_room(1, "Bath", "SN1")]}
+                        ]
+                    }
+                },
+            }
+        )
+
+    with mock.patch.object(api.requests, "post", side_effect=post):
+        client = api.Warmup4IE("user@example.com", "secret")
+
+    assert graphql_calls["n"] == 2
+    assert client.setup_finished is True
+    assert client.last_error is None
+
+
+def test_an_empty_follow_up_poll_keeps_the_previous_devices():
+    responses = {"n": 0}
+
+    def post(url, headers=None, json=None, timeout=None):
+        if json and json.get("request", {}).get("method") == "userLogin":
+            return _response(
+                {"status": {"result": "success"}, "response": {"token": "TOK"}}
+            )
+        responses["n"] += 1
+        rooms = [_room(1, "Bath", "SN1")] if responses["n"] == 1 else []
+        return _response(
+            {
+                "status": "success",
+                "data": {"user": {"allLocations": [{"id": 10, "name": "Home", "rooms": rooms}]}},
+            }
+        )
+
+    with mock.patch.object(api.requests, "post", side_effect=post):
+        client = api.Warmup4IE("user@example.com", "secret")
+        assert len(client.get_all_devices()) == 1
+        # The next payload has a location but no rooms, which is a real removal.
+        client.update_all_devices()
+        assert client.get_all_devices() == {}
+        client._all_devices["stale"] = object()
+        # A payload with no locations at all is treated as a glitch.
+        responses["n"] = 99
+
+        def empty_locations(url, headers=None, json=None, timeout=None):
+            if json and json.get("request", {}).get("method") == "userLogin":
+                return _response(
+                    {"status": {"result": "success"}, "response": {"token": "TOK"}}
+                )
+            return _response(
+                {"status": "success", "data": {"user": {"allLocations": []}}}
+            )
+
+        api.requests.post.side_effect = empty_locations
+        assert "stale" in client.update_all_devices()
+
+
+def test_invalid_password_is_an_auth_error():
+    def post(url, headers=None, json=None, timeout=None):
+        return _response(
+            {"status": {"result": "error"}, "response": {"errorCode": 101}}
+        )
+
+    with mock.patch.object(api.requests, "post", side_effect=post):
+        client = api.Warmup4IE("user@example.com", "wrong")
+
+    assert client.setup_finished is False
+    assert isinstance(client.last_error, api.WarmupAuthError)
+    assert client.last_error.code == 101

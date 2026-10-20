@@ -105,9 +105,28 @@ the custom component has been successfully loaded. Great! - now carry on.
 
 ## Configuration
 
-### Add the warmup platform manually via YAML
+### Add the account from the user interface
 
-Then add to your configuration.yaml:
+Go to **Settings → Devices & services → Add integration** and search for
+**Warmup**. Enter the email and password for the my.warmup.com account.
+If that account has more than one location, choose which locations to add.
+
+Each thermostat becomes a device. The device has a climate entity, plus
+sensors for air temperature, floor temperature, today's energy and today's
+cost. A second floor probe and the lifetime energy counter are added when
+Warmup sends them. Sensor temperatures are Celsius. Home Assistant converts
+the climate card into your unit system.
+
+The account is polled once a minute, and every entity uses that same
+result. If Warmup cannot be reached, the devices go unavailable instead of
+keeping a stale "heating" state. A rejected password opens a re-authentication
+prompt. The poll interval can be changed under the integration's options,
+between 30 and 600 seconds.
+
+An existing YAML block is imported into this entry on startup. After the
+entry appears, remove the YAML.
+
+### Legacy YAML
 
 ```yaml
 climate:
@@ -122,16 +141,8 @@ climate:
 -   **password** (required): the password used to login to the warmup
     web site; may be moved to the secrets.yaml file. See
     [secrets](https://www.home-assistant.io/docs/configuration/secrets/)
--   **location** (optional): only load rooms from this Warmup location.
-    The match ignores case. Leave it out to load every location on the account.
-
-Air temperature, floor temperature, today's energy and today's cost are
-added as sensors automatically. Temperatures on those sensors, and the
-extra climate attributes, are Celsius. Home Assistant converts the
-climate card itself into your unit system.
-
-After restarting home assistant, the component will be loaded
-automatically.
+-   **location** (optional): only import rooms from this Warmup location.
+    The match ignores case. Leave it out to import every location on the account.
 
 #### Tip when changing config
 
